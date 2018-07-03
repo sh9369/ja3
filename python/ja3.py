@@ -6,7 +6,8 @@ import dpkt
 import json
 import socket
 import struct
-from hashlib import md5
+import hashlib
+import win_inet_pton # for windows
 
 __author__ = "Tommy Stallings"
 __copyright__ = "Copyright (c) 2017, salesforce.com, inc."
@@ -34,9 +35,11 @@ def convert_ip(value):
     :returns: str
     """
     try:
-        return socket.inet_ntop(socket.AF_INET, value)
+        # return socket.inet_ntop(socket.AF_INET, value)
+        return win_inet_pton.inet_ntop(socket.AF_INET, value) # this for windows
     except ValueError:
-        return socket.inet_ntop(socket.AF_INET6, value)
+        # return socket.inet_ntop(socket.AF_INET6, value)
+        return win_inet_pton.inet_ntop(socket.AF_INET6, value) # this for windows
 
 
 def parse_variable_array(buf, byte_len):
@@ -116,11 +119,11 @@ def process_extensions(client_handshake):
     for ext_val, ext_data in client_handshake.extensions:
         if not GREASE_TABLE.get(ext_val):
             exts.append(ext_val)
-        if ext_val == 0x0a:
+        if ext_val == 0x0a:# type == 10
             a, b = parse_variable_array(ext_data, 2)
             # Elliptic curve points (16 bit values)
             elliptic_curve = convert_to_ja3_segment(a, 2)
-        elif ext_val == 0x0b:
+        elif ext_val == 0x0b:# type == 11
             a, b = parse_variable_array(ext_data, 1)
             # Elliptic curve point formats (8 bit values)
             elliptic_curve_point_format = convert_to_ja3_segment(a, 1)
@@ -145,7 +148,7 @@ def process_pcap(pcap, any_port=False):
     results = list()
     for timestamp, buf in pcap:
         try:
-            eth = dpkt.ethernet.Ethernet(buf)
+            eth = dpkt.ethernet.Ethernet(buf)# 链路层数据
         except Exception:
             continue
 
@@ -156,8 +159,8 @@ def process_pcap(pcap, any_port=False):
             # TCP only
             continue
 
-        ip = eth.data
-        tcp = ip.data
+        ip = eth.data   #IP层数据
+        tcp = ip.data   #TCP数据
 
         if not (tcp.dport == SSL_PORT or tcp.sport == SSL_PORT or any_port):
             # Doesn't match SSL port or we are picky
@@ -165,7 +168,7 @@ def process_pcap(pcap, any_port=False):
         if len(tcp.data) <= 0:
             continue
 
-        tls_handshake = bytearray(tcp.data)
+        tls_handshake = bytearray(tcp.data) # handshake 数据
         if tls_handshake[0] != TLS_HANDSHAKE:
             continue
 
@@ -208,13 +211,14 @@ def process_pcap(pcap, any_port=False):
             ja3.append(convert_to_ja3_segment(buf, 2))
             ja3 += process_extensions(client_handshake)
             ja3 = ",".join(ja3)
-
+            md5=hashlib.md5()
+            md5.update(ja3.encode())
             record = {"source_ip": convert_ip(ip.src),
                       "destination_ip": convert_ip(ip.dst),
                       "source_port": tcp.sport,
                       "destination_port": tcp.dport,
                       "ja3": ja3,
-                      "ja3_digest": md5(ja3.encode()).hexdigest(),
+                      "ja3_digest": md5.hexdigest(),
                       "timestamp": timestamp}
             results.append(record)
 
@@ -223,28 +227,30 @@ def process_pcap(pcap, any_port=False):
 
 def main():
     """Intake arguments from the user and print out JA3 output."""
-    desc = "A python script for extracting JA3 fingerprints from PCAP files"
-    parser = argparse.ArgumentParser(description=(desc))
-    parser.add_argument("pcap", help="The pcap file to process")
-    help_text = "Look for client hellos on any port instead of just 443"
-    parser.add_argument("-a", "--any_port", required=False,
-                        action="store_true", default=False,
-                        help=help_text)
-    help_text = "Print out as JSON records for downstream parsing"
-    parser.add_argument("-j", "--json", required=False, action="store_true",
-                        default=False, help=help_text)
-    args = parser.parse_args()
+    # desc = "A python script for extracting JA3 fingerprints from PCAP files"
+    # parser = argparse.ArgumentParser(description=(desc))
+    # parser.add_argument("pcap", help="The pcap file to process")
+    # help_text = "Look for client hellos on any port instead of just 443"
+    # parser.add_argument("-a", "--any_port", required=False,
+    #                     action="store_true", default=False,
+    #                     help=help_text)
+    # help_text = "Print out as JSON records for downstream parsing"
+    # parser.add_argument("-j", "--json", required=False, action="store_true",
+    #                     default=False, help=help_text)
+    # args = parser.parse_args()
 
     # Use an iterator to process each line of the file
     output = None
-    with open(args.pcap, 'rb') as fp:
+    # with open(args.pcap, 'rb') as fp:
+    with open('F:\\testfile\\test_ssl.pcap', 'rb') as fp:
         try:
             capture = dpkt.pcap.Reader(fp)
         except ValueError as e:
             raise Exception("File doesn't appear to be a PCAP: %s" % e)
-        output = process_pcap(capture, any_port=args.any_port)
+        output = process_pcap(capture, any_port=False)
 
-    if args.json:
+    # if args.json:
+    if 1==1:
         output = json.dumps(output, indent=4, sort_keys=True)
         print(output)
     else:
