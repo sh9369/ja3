@@ -51,7 +51,7 @@ def parse_variable_array(buf, byte_len):
     :type byte_len: int
     :returns: bytes, int
     """
-    _SIZE_FORMATS = ['!B', '!H', '!I', '!I']
+    _SIZE_FORMATS = ['!B', '!H', '!I', '!I'] #将网络字节流解析成对应字节数
     assert byte_len <= 4
     size_format = _SIZE_FORMATS[byte_len - 1]
     padding = b'\x00' if byte_len == 3 else b''
@@ -175,7 +175,7 @@ def process_pcap(pcap, any_port=False):
         records = list()
 
         try:
-            records, bytes_used = dpkt.ssl.tls_multi_factory(tcp.data)
+            records, bytes_used = dpkt.ssl.tls_multi_factory(tcp.data)#解析多个TLS record
         except dpkt.ssl.SSL3Exception:
             continue
         except dpkt.dpkt.NeedData:
@@ -184,6 +184,11 @@ def process_pcap(pcap, any_port=False):
         if len(records) <= 0:
             continue
 
+        '''
+        record 包括头部分/数据部分
+        头部分： Content Type/Version/Length
+        数据部分： handshake Protocal
+        '''
         for record in records:
             if record.type != TLS_HANDSHAKE:
                 continue
@@ -193,7 +198,7 @@ def process_pcap(pcap, any_port=False):
             if client_hello[0] != 1:
                 # We only want client HELLO
                 continue
-            try:
+            try: #判断数据部分是否仍是 Client Hello包
                 handshake = dpkt.ssl.TLSHandshake(record.data)
             except dpkt.dpkt.NeedData:
                 # Looking for a handshake here
@@ -207,7 +212,7 @@ def process_pcap(pcap, any_port=False):
             buf, ptr = parse_variable_array(client_handshake.data[ptr:], 2)
             ja3 = [str(client_handshake.version)]
 
-            # Cipher Suites (16 bit values)
+            # Cipher Suites (16 bit values)每个Cipher大小是2字节
             ja3.append(convert_to_ja3_segment(buf, 2))
             ja3 += process_extensions(client_handshake)
             ja3 = ",".join(ja3)
