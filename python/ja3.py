@@ -1,5 +1,7 @@
 #!/usr/bin/env python
+# -*- coding:utf8 -*-
 """Generate JA3 fingerprints from PCAPs using Python."""
+
 
 import argparse
 import dpkt
@@ -49,13 +51,13 @@ def parse_variable_array(buf, byte_len):
     :type buf: bytes
     :param byte_len: Length to process
     :type byte_len: int
-    :returns: bytes, int
+    :returns: bytes, int 返回具体数据部分，和最后位置
     """
     _SIZE_FORMATS = ['!B', '!H', '!I', '!I'] #将网络字节流解析成对应字节数
     assert byte_len <= 4
     size_format = _SIZE_FORMATS[byte_len - 1]
     padding = b'\x00' if byte_len == 3 else b''
-    size = struct.unpack(size_format, padding + buf[:byte_len])[0]
+    size = struct.unpack(size_format, padding + buf[:byte_len])[0] #data的具体大小
     data = buf[byte_len:byte_len + size]
 
     return data, size + byte_len
@@ -89,18 +91,25 @@ def convert_to_ja3_segment(data, element_width):
     """
     int_vals = list()
     data = bytearray(data)
-    if len(data) % element_width:
+    if len(data) % element_width:# 长度 mod 2
         message = '{count} is not a multiple of {width}'
         message = message.format(count=len(data), width=element_width)
         raise ValueError(message)
 
     for i in range(0, len(data), element_width):
-        element = ntoh(data[i: i + element_width])
+        element = ntoh(data[i: i + element_width])# 按element_width字节数解析字节流
         if element not in GREASE_TABLE:
             int_vals.append(element)
 
     return "-".join(str(x) for x in int_vals)
 
+def getServerName(data):
+    datatmp = bytearray(data)
+    datalen=ntoh(datatmp[1: 3])
+    # print len(datatmp[datalen:])
+    # 第一字节表明是host_name，第二三字节是name长度，第四字节到最后是name
+    snstr=struct.unpack('!{}s'.format(datalen), datatmp[3:])[0]
+    return  snstr
 
 def process_extensions(client_handshake):
     """Process any extra extensions and convert to a JA3 segment.
@@ -111,22 +120,26 @@ def process_extensions(client_handshake):
     """
     if not hasattr(client_handshake, "extensions"):
         # Needed to preserve commas on the join
-        return ["", "", ""]
+        return ["", "", ""],""
 
     exts = list()
     elliptic_curve = ""
     elliptic_curve_point_format = ""
-    for ext_val, ext_data in client_handshake.extensions:
+    serverName=""
+    for ext_val, ext_data in client_handshake.extensions:# ext_val是Type，ext_data是除Type外所有数据
         if not GREASE_TABLE.get(ext_val):
             exts.append(ext_val)
-        if ext_val == 0x0a:# type == 10
-            a, b = parse_variable_array(ext_data, 2)
+        if ext_val == 0x0a:# type == 10 获取椭圆加密曲线点
+            a, b = parse_variable_array(ext_data, 2)# 跳过 Length，2字节
             # Elliptic curve points (16 bit values)
             elliptic_curve = convert_to_ja3_segment(a, 2)
-        elif ext_val == 0x0b:# type == 11
+        elif ext_val == 0x0b:# type == 11 获取椭圆曲线模板
             a, b = parse_variable_array(ext_data, 1)
             # Elliptic curve point formats (8 bit values)
             elliptic_curve_point_format = convert_to_ja3_segment(a, 1)
+        elif ext_val == 0x00:# type ==0 获取 ssl server name
+            a, b = parse_variable_array(ext_data, 2)  # 跳过 Length，2字节,a截断数据
+            serverName=getServerName(a)
         else:
             continue
 
@@ -134,7 +147,7 @@ def process_extensions(client_handshake):
     results.append("-".join([str(x) for x in exts]))
     results.append(elliptic_curve)
     results.append(elliptic_curve_point_format)
-    return results
+    return results,serverName
 
 
 def process_pcap(pcap, any_port=False):
@@ -214,7 +227,8 @@ def process_pcap(pcap, any_port=False):
 
             # Cipher Suites (16 bit values)每个Cipher大小是2字节
             ja3.append(convert_to_ja3_segment(buf, 2))
-            ja3 += process_extensions(client_handshake)
+            tmpJA3,servername=process_extensions(client_handshake)
+            ja3 += tmpJA3
             ja3 = ",".join(ja3)
             md5=hashlib.md5()
             md5.update(ja3.encode())
@@ -224,11 +238,15 @@ def process_pcap(pcap, any_port=False):
                       "destination_port": tcp.dport,
                       "ja3": ja3,
                       "ja3_digest": md5.hexdigest(),
+                      "server_name":servername,
                       "timestamp": timestamp}
             results.append(record)
 
     return results
 
+def saveFunc(name,data):
+    with open(name,'w') as fp:
+        json.dump(data,fp,indent=4)
 
 def main():
     """Intake arguments from the user and print out JA3 output."""
@@ -247,13 +265,16 @@ def main():
     # Use an iterator to process each line of the file
     output = None
     # with open(args.pcap, 'rb') as fp:
-    with open('F:\\testfile\\test_ssl.pcap', 'rb') as fp:
+    filename="test_ssl_jt"
+    filepath='F:\\testfile\\'
+    with open(filepath+filename+".pcap", 'rb') as fp:
         try:
             capture = dpkt.pcap.Reader(fp)
         except ValueError as e:
             raise Exception("File doesn't appear to be a PCAP: %s" % e)
         output = process_pcap(capture, any_port=False)
-
+    savename=filename+"_save.json"
+    saveFunc(filepath+savename,output)
     # if args.json:
     if 1==1:
         output = json.dumps(output, indent=4, sort_keys=True)
